@@ -6,6 +6,7 @@ import { isRunningWithBun } from './bundledMode.js'
 import {
   getClaudeConfigHomeDir,
   isEnvTruthy,
+  migrateLegacyClaudeConfigHome,
   resolveConfigDirEnv,
 } from './envUtils.js'
 import { findExecutable } from './findExecutable.js'
@@ -13,6 +14,29 @@ import { getFsImplementation } from './fsOperations.js'
 import { which } from './which.js'
 
 type Platform = 'win32' | 'darwin' | 'linux'
+
+export function resolveGlobalClaudeFile(options: {
+  configDirEnv?: string
+  homeDir?: string
+  oauthSuffix?: string
+  migrationSucceeded?: boolean
+  existsSync: (path: string) => boolean
+}): string {
+  const oauthSuffix = options.oauthSuffix ?? ''
+  const configDir = options.configDirEnv || options.homeDir || homedir()
+  const hasExplicitConfigDir = Boolean(options.configDirEnv)
+  const newFilename = `.openclaude${oauthSuffix}.json`
+  const legacyFilename = `.claude${oauthSuffix}.json`
+
+  if (
+    (hasExplicitConfigDir || options.migrationSucceeded === false) &&
+    !options.existsSync(join(configDir, newFilename)) &&
+    options.existsSync(join(configDir, legacyFilename))
+  ) {
+    return join(configDir, legacyFilename)
+  }
+  return join(configDir, newFilename)
+}
 
 // Config and data paths
 export const getGlobalClaudeFile = memoize((): string => {
@@ -26,24 +50,28 @@ export const getGlobalClaudeFile = memoize((): string => {
   }
 
   const oauthSuffix = fileSuffixForOauthConfig()
-  const configDir =
-    resolveConfigDirEnv({
-      openClaudeConfigDir: process.env.OPENCLAUDE_CONFIG_DIR,
-      legacyConfigDir: process.env.CLAUDE_CONFIG_DIR,
-    }) ?? homedir()
+  const configDirEnv = resolveConfigDirEnv({
+    openClaudeConfigDir: process.env.OPENCLAUDE_CONFIG_DIR,
+    legacyConfigDir: process.env.CLAUDE_CONFIG_DIR,
+  })
+  const configDir = configDirEnv ?? homedir()
+  const hasExplicitConfigDir = Boolean(configDirEnv)
+  let migrationSucceeded = true
 
-  // Default to .openclaude.json. Fall back to .claude.json only if the new
-  // file doesn't exist yet and the legacy one does (same migration pattern
-  // as resolveClaudeConfigHomeDir for the config directory).
-  const newFilename = `.openclaude${oauthSuffix}.json`
-  const legacyFilename = `.claude${oauthSuffix}.json`
-  if (
-    !getFsImplementation().existsSync(join(configDir, newFilename)) &&
-    getFsImplementation().existsSync(join(configDir, legacyFilename))
-  ) {
-    return join(configDir, legacyFilename)
+  if (!hasExplicitConfigDir) {
+    migrationSucceeded = migrateLegacyClaudeConfigHome({ homeDir: configDir })
   }
-  return join(configDir, newFilename)
+
+  // Default installs hard-cut to .openclaude.json after the migration above.
+  // Explicit config-dir users (either env var) keep the legacy filename
+  // fallback because that env var is the opt-out for automatic migration.
+  return resolveGlobalClaudeFile({
+    configDirEnv,
+    homeDir: configDir,
+    oauthSuffix,
+    migrationSucceeded,
+    existsSync: path => getFsImplementation().existsSync(path),
+  })
 })
 
 const hasInternetAccess = memoize(async (): Promise<boolean> => {
