@@ -116,21 +116,131 @@ async function fetchAccount(token) {
   }
 }
 
-function approvalPage(code, message) {
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c],
+  )
+}
+
+// ── New API integration (account/password SSO) ──────────────────────────────
+
+/** Build a `Cookie` header value from an array of Set-Cookie strings. */
+function cookieHeaderFrom(setCookies) {
+  return (setCookies || [])
+    .map(c => c.split(';')[0])
+    .filter(Boolean)
+    .join('; ')
+}
+
+/** Log a user into New API with username/password; returns the session cookie. */
+async function newApiLogin(username, password) {
+  const res = await fetch(`${NEW_API_BASE_URL}/api/user/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  })
+  let data = {}
+  try {
+    data = await res.json()
+  } catch {
+    // fall through to error handling
+  }
+  if (!res.ok || data.success === false) {
+    return { ok: false, message: data.message || `Login failed (HTTP ${res.status}).` }
+  }
+  const setCookies =
+    typeof res.headers.getSetCookie === 'function'
+      ? res.headers.getSetCookie()
+      : res.headers.get('set-cookie')
+        ? [res.headers.get('set-cookie')]
+        : []
+  const user = data.data || {}
+  return {
+    ok: true,
+    cookie: cookieHeaderFrom(setCookies),
+    userId: user.id,
+    username: user.username || username,
+  }
+}
+
+/**
+ * Create an API token under the logged-in user's session and return the usable
+ * key (`sk-...`). New API requires the `New-Api-User` header alongside the
+ * session cookie. Field/response shapes vary by version, so this is defensive:
+ * it reads the key from the create response if present, otherwise lists tokens
+ * and matches by name.
+ */
+async function newApiCreateToken(cookie, userId, name) {
+  const headers = {
+    'content-type': 'application/json',
+    cookie,
+    'New-Api-User': String(userId ?? ''),
+  }
+  const createRes = await fetch(`${NEW_API_BASE_URL}/api/token/`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      name,
+      remain_quota: -1,
+      expired_time: -1,
+      unlimited_quota: true,
+    }),
+  })
+  let created = {}
+  try {
+    created = await createRes.json()
+  } catch {
+    // fall through
+  }
+  if (!createRes.ok || created.success === false) {
+    return { ok: false, message: created.message || `Token creation failed (HTTP ${createRes.status}).` }
+  }
+  if (created?.data?.key) {
+    return { ok: true, key: `sk-${created.data.key}` }
+  }
+
+  const listRes = await fetch(`${NEW_API_BASE_URL}/api/token/?p=0&size=50`, { headers })
+  let list = {}
+  try {
+    list = await listRes.json()
+  } catch {
+    // fall through
+  }
+  const items = Array.isArray(list?.data)
+    ? list.data
+    : Array.isArray(list?.data?.records)
+      ? list.data.records
+      : []
+  const byNewest = (a, b) => (b.id || 0) - (a.id || 0)
+  const match =
+    items.filter(t => t.name === name).sort(byNewest)[0] ??
+    items.slice().sort(byNewest)[0]
+  if (match?.key) {
+    return { ok: true, key: `sk-${match.key}`, username: undefined }
+  }
+  return {
+    ok: false,
+    message: 'Token created but its key could not be read (check New API version).',
+  }
+}
+
+function loginPage(code, message) {
   return `<!doctype html><html><head><meta charset="utf-8">
 <title>Sign in to Weo</title>
 <style>body{font-family:system-ui;max-width:30rem;margin:4rem auto;padding:0 1rem}
 input{width:100%;padding:.6rem;margin:.4rem 0;box-sizing:border-box}
 button{padding:.6rem 1rem}</style></head><body>
-<h1>Authorize Weo terminal</h1>
-<p>Log in to the Weo platform, create an API token, and paste it below to
-authorize device code <b>${code}</b>.</p>
-${message ? `<p style="color:#b00">${message}</p>` : ''}
+<h1>Sign in to Weo</h1>
+<p>Log in with your Weo account to authorize device code
+<b>${escapeHtml(code)}</b>.</p>
+${message ? `<p style="color:#b00">${escapeHtml(message)}</p>` : ''}
 <form method="POST" action="/activate">
-<input type="hidden" name="user_code" value="${code}"/>
-<label>Weo API token</label>
-<input name="token" placeholder="sk-..." autocomplete="off"/>
-<button type="submit">Authorize</button>
+<input type="hidden" name="user_code" value="${escapeHtml(code)}"/>
+<label>Username</label>
+<input name="username" autocomplete="username"/>
+<label>Password</label>
+<input name="password" type="password" autocomplete="current-password"/>
+<button type="submit">Sign in</button>
 </form></body></html>`
 }
 
@@ -162,28 +272,40 @@ const server = createServer(async (req, res) => {
       })
     }
 
-    // 2) Browser approval page.
+    // 2) Browser login page (Weo account = New API account).
     if (req.method === 'GET' && path === '/activate') {
       const code = url.searchParams.get('user_code') || ''
-      return html(res, 200, approvalPage(code, ''))
+      return html(res, 200, loginPage(code, ''))
     }
 
-    // 3) Browser submits a token to approve.
+    // 3) Browser submits account credentials → log into New API, mint a token,
+    //    and bind it to the device code. SSO: the user never handles a token.
     if (req.method === 'POST' && path === '/activate') {
       const body = await readBody(req)
       const params = new URLSearchParams(body)
       const code = (params.get('user_code') || '').trim()
-      const token = (params.get('token') || '').trim()
+      const username = (params.get('username') || '').trim()
+      const password = params.get('password') || ''
       const entry = [...devices.values()].find(d => d.userCode === code)
-      if (!entry) return html(res, 400, approvalPage(code, 'Unknown or expired code.'))
-      const account = token ? await fetchAccount(token) : null
-      if (!account) {
-        return html(res, 400, approvalPage(code, 'Invalid token. Check it and try again.'))
+      if (!entry) return html(res, 400, loginPage(code, 'Unknown or expired code.'))
+
+      const login = await newApiLogin(username, password)
+      if (!login.ok) {
+        return html(res, 401, loginPage(code, login.message))
       }
+      const minted = await newApiCreateToken(
+        login.cookie,
+        login.userId,
+        `weo-cli-${code}`,
+      )
+      if (!minted.ok) {
+        return html(res, 502, loginPage(code, minted.message))
+      }
+
       entry.status = 'approved'
-      entry.token = token
-      entry.user = { username: account.username }
-      return html(res, 200, '<!doctype html><p>Authorized. You can return to the terminal.</p>')
+      entry.token = minted.key
+      entry.user = { username: login.username, id: login.userId }
+      return html(res, 200, '<!doctype html><p>Signed in. You can return to the terminal.</p>')
     }
 
     // 4) CLI polls for the token.
