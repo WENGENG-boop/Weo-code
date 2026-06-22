@@ -12,6 +12,7 @@ import { Dialog } from '../../components/design-system/Dialog.js'
 import { useMainLoopModel } from '../../hooks/useMainLoopModel.js'
 import { Text } from '../../ink.js'
 import { WeoLoginFlow, type WeoLoginResult } from './WeoLoginFlow.js'
+import { forceWeoProvider } from '../../services/weo/lock.js'
 import { refreshGrowthBookAfterAuthChange } from '../../services/analytics/growthbook.js'
 import { refreshPolicyLimits } from '../../services/policyLimits/index.js'
 import { refreshRemoteManagedSettings } from '../../services/remoteManagedSettings/index.js'
@@ -38,6 +39,11 @@ export async function call(
           onDone('Login interrupted')
           return
         }
+
+        // Push the freshly stored Weo token into the env the API client reads
+        // (ANTHROPIC_API_KEY/BASE_URL). Without this, queries made in the same
+        // session after login still go out without a key → 401 "Not logged in".
+        forceWeoProvider()
 
         context.onChangeAPIKey()
         // Signature-bearing blocks (thinking, connector_text) are bound to the
