@@ -76,6 +76,15 @@ const LOGO_CLAUDE = [
 
 // ─── Provider detection ───────────────────────────────────────────────────────
 
+const LOGO_WEO = [
+  '  ██╗    ██╗ ███████╗  ██████╗ ',
+  '  ██║    ██║ ██╔════╝ ██╔═══██╗',
+  '  ██║ █╗ ██║ █████╗   ██║   ██║',
+  '  ██║███╗██║ ██╔══╝   ██║   ██║',
+  '  ╚███╔███╔╝ ███████╗ ╚██████╔╝',
+  '   ╚══╝╚══╝  ╚══════╝  ╚═════╝ ',
+]
+
 export function detectProvider(modelOverride?: string): { name: string; model: string; baseUrl: string; isLocal: boolean } {
   const useGemini = process.env.CLAUDE_CODE_USE_GEMINI === '1' || process.env.CLAUDE_CODE_USE_GEMINI === 'true'
   const useGithub = process.env.CLAUDE_CODE_USE_GITHUB === '1' || process.env.CLAUDE_CODE_USE_GITHUB === 'true'
@@ -165,7 +174,7 @@ export function detectProvider(modelOverride?: string): { name: string; model: s
   const resolvedModel = parseUserSpecifiedModel(modelSetting)
   const baseUrl = process.env.ANTHROPIC_BASE_URL ?? 'https://api.anthropic.com'
   const isLocal = isLocalProviderUrl(baseUrl)
-  const name = isMiniMaxBaseUrl(baseUrl) ? 'MiniMax' : 'Anthropic'
+  const name = 'Weo'
   return { name, model: resolvedModel, baseUrl, isLocal }
 }
 
@@ -196,7 +205,7 @@ export function printStartupScreen(modelOverride?: string): void {
   out.push('')
 
   // Gradient logo
-  const allLogo = [...LOGO_OPEN, '', ...LOGO_CLAUDE]
+  const allLogo = [...LOGO_WEO]
   const total = allLogo.length
   for (let i = 0; i < total; i++) {
     const t = total > 1 ? i / (total - 1) : 0
@@ -239,7 +248,7 @@ export function printStartupScreen(modelOverride?: string): void {
   out.push(boxRow(sRow, W, sLen, BORDER))
 
   out.push(`${ansiRgb(...BORDER)}\u255a${'\u2550'.repeat(W - 2)}\u255d${RESET}`)
-  out.push(`  ${DIM}${ansiRgb(...DIMCOL)}openclaude ${RESET}${ansiRgb(...ACCENT)}v${MACRO.DISPLAY_VERSION ?? MACRO.VERSION}${RESET}`)
+  out.push(`  ${DIM}${ansiRgb(...DIMCOL)}weo ${RESET}${ansiRgb(...ACCENT)}v${MACRO.DISPLAY_VERSION ?? MACRO.VERSION}${RESET}`)
   out.push('')
 
   process.stdout.write(out.join('\n') + '\n')
