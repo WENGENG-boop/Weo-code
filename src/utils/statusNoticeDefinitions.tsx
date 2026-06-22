@@ -312,7 +312,15 @@ const dangerouslySkipPermissionsNotice: StatusNoticeDefinition = {
 };
 
 // All notice definitions
-export const statusNoticeDefinitions: StatusNoticeDefinition[] = [largeMemoryFilesNotice, largeAgentDescriptionsNotice, localModelContextLoadNotice, claudeAiSubscriberExternalTokenNotice, apiKeyConflictNotice, bothAuthMethodsNotice, jetbrainsPluginNotice, thirdPartyPermissiveModeNotice, dangerouslySkipPermissionsNotice];
+// Weo build: the Anthropic auth-conflict notices (claudeAiSubscriberExternalToken,
+// apiKeyConflict, bothAuthMethods) are intentionally omitted — Weo always
+// authenticates with the platform API key against api.weo.asia, so a leftover
+// claude.ai token is never used and these warnings are just noise.
+export const statusNoticeDefinitions: StatusNoticeDefinition[] = [largeMemoryFilesNotice, largeAgentDescriptionsNotice, localModelContextLoadNotice, jetbrainsPluginNotice, thirdPartyPermissiveModeNotice, dangerouslySkipPermissionsNotice];
+
+void claudeAiSubscriberExternalTokenNotice;
+void apiKeyConflictNotice;
+void bothAuthMethodsNotice;
 
 // Helper functions for external use
 export function getActiveNotices(context: StatusNoticeContext): StatusNoticeDefinition[] {
