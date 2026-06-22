@@ -243,14 +243,12 @@ export async function main(
   }
   reapplyExplicitProviderInputs()
 
-  const { applyStartupEnvFromProfile } = await importers.providerProfile()
-  await applyStartupEnvFromProfile({
-    processEnv: process.env,
-    onValidationError: message => {
-      console.error(message)
-    },
-  })
+  // Weo single-provider build: provider profiles are disabled (the provider is
+  // force-locked to the Weo platform), so skip loading any saved/default
+  // profile. This also avoids the gitlawb-opengateway default-profile
+  // validation warning. Re-assert the lock afterwards.
   reapplyExplicitProviderInputs()
+  ;(await import('../services/weo/lock.js')).forceWeoProvider()
 
   // Pane/window teammates are launched as fresh CLI processes. If the parent
   // selected a configured agentModels key, apply that route before provider
