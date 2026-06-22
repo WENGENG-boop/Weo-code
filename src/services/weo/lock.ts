@@ -12,6 +12,8 @@
  */
 import { getWeoBaseUrl, getWeoDefaultModel } from '../../constants/weo.js'
 import { getWeoToken } from './auth.js'
+import { normalizeApiKeyForConfig } from '../../utils/authPortable.js'
+import { getGlobalConfig, saveGlobalConfig } from '../../utils/config.js'
 
 /** Routing env vars from other providers that must never take effect. */
 const COMPETING_ROUTE_ENV = [
@@ -54,6 +56,11 @@ export function forceWeoProvider(): boolean {
   if (token) {
     // Used as `x-api-key` by the Anthropic SDK against the relay.
     process.env.ANTHROPIC_API_KEY = token
+    // The Weo token is our own trusted platform key. Auto-approve it so Claude
+    // Code's API-key approval gate (customApiKeyResponses.approved, checked by
+    // getAnthropicApiKey) accepts it — otherwise the chat path treats a valid
+    // key as "Not logged in" until the user approves it via a /login prompt.
+    approveWeoApiKey(token)
   }
 
   if (!process.env.ANTHROPIC_MODEL) {
@@ -61,4 +68,26 @@ export function forceWeoProvider(): boolean {
   }
 
   return Boolean(token)
+}
+
+/** Add the Weo token to the approved-key list (idempotent, best-effort). */
+function approveWeoApiKey(token: string): void {
+  try {
+    const normalized = normalizeApiKeyForConfig(token)
+    const approved = getGlobalConfig().customApiKeyResponses?.approved ?? []
+    if (approved.includes(normalized)) return
+    saveGlobalConfig(current => ({
+      ...current,
+      customApiKeyResponses: {
+        ...current.customApiKeyResponses,
+        approved: [
+          ...(current.customApiKeyResponses?.approved ?? []),
+          normalized,
+        ],
+        rejected: current.customApiKeyResponses?.rejected ?? [],
+      },
+    }))
+  } catch {
+    // Best-effort: if the config isn't writable yet, a later call retries.
+  }
 }
