@@ -250,6 +250,7 @@ export function getDeclaredMarketplaces(): Record<string, DeclaredMarketplace> {
   for (const [pluginId, value] of Object.entries(enabledPlugins)) {
     if (!value) continue
     const { marketplace } = parsePluginIdentifier(pluginId)
+    if (!marketplace) continue
     const source = BUILTIN_IMPLICIT_MARKETPLACES[marketplace]
     if (source && !implicit[marketplace]) {
       implicit[marketplace] = {
